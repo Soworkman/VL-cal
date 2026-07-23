@@ -206,15 +206,15 @@
           const showConfirm = (title, message, onConfirm, type = 'confirm') => setModalConfig({ isOpen: true, type, title, message, onConfirm });
           const closeModal = () => setModalConfig(prev => ({ ...prev, isOpen: false }));
 
-          // --- 【API 串接】自動同步香港政府公眾假期 (使用雙重代理備援機制) ---
+          // --- 【API 串接】自動同步香港政府公眾假期 (已更新安全防護較低的代理) ---
           const handleSyncGovHolidays = async (isManualClick = false) => {
             setIsSyncing(true);
             const targetUrl = 'https://vcalendar.1823.gov.hk/public-holiday-tc.json';
             
-            // 雙重代理列表，如果第一個失敗會自動嘗試第二個
+            // 使用穩定度高且較少被攔截的 corsproxy.io 以及 allorigins 的 /get 端點(避免 raw 檔案直接下載觸發防毒)
             const proxyUrls = [
-              `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`,
-              `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`
+              `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`,
+              `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`
             ];
 
             let data = null;
@@ -223,7 +223,14 @@
               try {
                 const response = await fetch(proxyUrl);
                 if (response.ok) {
-                  data = await response.json();
+                  const rawData = await response.json();
+                  
+                  // 處理 AllOrigins /get 特殊格式
+                  if (proxyUrl.includes('allorigins') && rawData.contents) {
+                    data = JSON.parse(rawData.contents);
+                  } else {
+                    data = rawData;
+                  }
                   break; // 成功取得資料即跳出迴圈
                 }
               } catch (err) {
@@ -232,7 +239,7 @@
             }
 
             try {
-              if (!data) throw new Error('所有代理伺服器均無法連接');
+              if (!data || !data.vcalendar) throw new Error('所有代理伺服器均無法連接或資料格式錯誤');
               
               const parsedHolidays = [];
               const events = data.vcalendar[0].vevent;
@@ -276,7 +283,7 @@
               }
             } catch (error) {
               console.error(error);
-              if (isManualClick) showConfirm("同步失敗", "無法連接至政府假期 API。可能是代理伺服器繁忙，您可稍後再試或使用「批量貼上」功能。", () => {}, 'alert');
+              if (isManualClick) showConfirm("連線安全封鎖", "您的網路或防毒軟體可能完全封鎖了外部代理請求。請直接使用卡片右上角的「批量貼上」按鈕，手動複製政府網頁假期即可完全避開此問題。", () => {}, 'alert');
             } finally {
               setIsSyncing(false);
             }
